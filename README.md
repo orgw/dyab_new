@@ -171,3 +171,17 @@ Also, if you encounter any issues related to Rosetta, you can simply go into the
 ```
 ./scons.py mode=release bin 
 ```
+
+## Citation
+
+```text
+@inproceedings{tan2025dyab,
+  title={dyAb: Flow Matching for Flexible Antibody Design with AlphaFold-driven Pre-binding Antigen},
+  author={Tan, Cheng and Zhang, Yijie and Gao, Zhangyang and Huang, Yufei and Lin, Haitao and Wu, Lirong and Wu, Fandi and Blanchette, Mathieu and Li, Stan Z},
+  booktitle={Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume={39},
+  number={1},
+  pages={782--790},
+  year={2025}
+}
+```
