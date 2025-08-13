@@ -6,3 +6,5 @@ from .dyMEAN_itf import dyMEANITF
 from .dyMEANOpt_itf import dyMEANOptITF
 from .dyAb_itf import dyAbITF
 from .dyAbOpt_itf import dyAbOptITF
+from .ica import InvariantCrossAttention
+from .ellipsoid_conditioner import EllipsoidTokens, EllipsoidConditionerMixin

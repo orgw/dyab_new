@@ -219,6 +219,115 @@ class E2EDataset(torch.utils.data.Dataset):
             self._save_part(save_dir, num_entry_per_file)
 
     ########## override get item ##########
+    # def __getitem__(self, idx):
+    #     '''
+    #     an example of the returned data
+    #     {
+    #         'X': [n, n_channel, 3],
+    #         'S': [n],
+    #         'cmask': [n],
+    #         'smask': [n],
+    #         'paratope_mask': [n],
+    #         'xloss_mask': [n, n_channel],
+    #         'template': [n, n_channel, 3]
+    #     }
+    #     '''
+    #     idx = self.idx_mapping[idx]
+    #     idx = self._check_load_part(idx)
+    #     item = self.data[idx]
+
+    #     # antigen
+    #     ag_residues = []
+
+    #     if self.full_antigen:
+    #         # get antigen residues
+    #         ag = item.get_antigen()
+
+    #         for chain in ag.get_chain_names():
+    #             chain = ag.get_chain(chain)
+    #             for i in range(len(chain)):
+    #                 residue = chain.get_residue(i)
+    #                 ag_residues.append(residue)
+    #     else:
+    #         # get antigen residues (epitope only)
+    #         for residue, chain, i in item.get_epitope():
+    #             ag_residues.append(residue)
+
+    #     # generate antigen data
+    #     ag_data = _generate_chain_data(ag_residues, VOCAB.BOA)
+
+    #     hc, lc = item.get_heavy_chain(), item.get_light_chain()
+    #     hc_residues, lc_residues = [], []
+
+    #     # generate heavy chain data
+    #     for i in range(len(hc)):
+    #         hc_residues.append(hc.get_residue(i))
+    #     hc_data = _generate_chain_data(hc_residues, VOCAB.BOH)
+
+    #     # generate light chain data
+    #     for i in range(len(lc)):
+    #         lc_residues.append(lc.get_residue(i))
+    #     lc_data = _generate_chain_data(lc_residues, VOCAB.BOL)
+
+    #     data = { key: np.concatenate([ag_data[key], hc_data[key], lc_data[key]], axis=0) \
+    #              for key in hc_data}
+        
+    #     # replace with af2 init / full antigen / monomer antigen
+    #     if self.use_af2ag:
+    #         ag = item.get_antigen()
+    #         pdb_id = ag.pdb_id[:4]
+    #         if pdb_id in self.af2ag_pdb_id:
+    #             ag = Protein.from_pdb('all_data/AF2_antigen_aligned_pdbs/' + pdb_id + '.pdb')
+    #             item.antigen = ag
+    #             item.epitope = item._cal_epitope()
+    #         # 1. full ag
+    #         # af2_ag_residues = []
+    #         # for chain in ag.get_chain_names():
+    #         #     chain = ag.get_chain(chain)
+    #         #     for i in range(len(chain)):
+    #         #         residue = chain.get_residue(i)
+    #         #         af2_ag_residues.append(residue)
+    #         # 2. epitope only
+    #         af2_ag_residues = []
+    #         for residue, chain, i in item.get_epitope():
+    #             af2_ag_residues.append(residue)
+            
+    #         af2_ag_data = _generate_chain_data(af2_ag_residues, VOCAB.BOA)
+
+    #     # smask (sequence) and cmask (coordinates): 0 for fixed, 1 for generate
+    #     # not generate coordinates of global node 
+    #     if self.use_af2ag:
+    #         cmask = [1 for _ in ag_data['S']] + [0] + [1 for _ in hc_data['S'][1:]] + [0] + [1 for _ in lc_data['S'][1:]]
+    #     else:
+    #         cmask = [0 for _ in ag_data['S']] + [0] + [1 for _ in hc_data['S'][1:]] + [0] + [1 for _ in lc_data['S'][1:]]
+    #     # according to the setting of cdr
+    #     if self.cdr is None:
+    #         smask = [0 for _ in ag_data['S']] + [0] + [1 for _ in hc_data['S'][1:]] + [0] + [1 for _ in lc_data['S'][1:]]
+    #     else:
+    #         smask = [0 for _ in range(len(ag_data['S']) + len(hc_data['S']) + len(lc_data['S']))]
+    #         cdrs = [self.cdr] if type(self.cdr) == str else self.cdr
+    #         for cdr in cdrs:
+    #             cdr_range = item.get_cdr_pos(cdr)
+    #             offset = len(ag_data['S']) + 1 + (0 if cdr[0] == 'H' else len(hc_data['S']))
+    #             for idx in range(offset + cdr_range[0], offset + cdr_range[1] + 1):
+    #                 smask[idx] = 1
+
+    #     data['cmask'], data['smask'] = cmask, smask
+
+    #     paratope_mask = [0 for _ in range(len(ag_data['S']) + len(hc_data['S']) + len(lc_data['S']))]
+    #     paratope = [self.paratope] if type(self.paratope) == str else self.paratope
+    #     for cdr in paratope:
+    #         cdr_range = item.get_cdr_pos(cdr)
+    #         offset = len(ag_data['S']) + 1 + (0 if cdr[0] == 'H' else len(hc_data['S']))
+    #         for idx in range(offset + cdr_range[0], offset + cdr_range[1] + 1):
+    #             paratope_mask[idx] = 1
+    #     data['paratope_mask'] = paratope_mask
+
+    #     template = ConserveTemplateGenerator().construct_template(item, align=False)
+    #     data['template'] = np.concatenate([af2_ag_data['X'], template]) if self.use_af2ag else template
+
+    #     return data
+
     def __getitem__(self, idx):
         '''
         an example of the returned data
@@ -235,6 +344,15 @@ class E2EDataset(torch.utils.data.Dataset):
         idx = self.idx_mapping[idx]
         idx = self._check_load_part(idx)
         item = self.data[idx]
+
+        # Decide which antigen to use upfront to ensure consistency
+        if self.use_af2ag:
+            ag = item.get_antigen()
+            pdb_id = ag.pdb_id[:4]
+            if pdb_id in self.af2ag_pdb_id:
+                ag = Protein.from_pdb('all_data/AF2_antigen_aligned_pdbs/' + pdb_id + '.pdb')
+                item.antigen = ag
+                item.epitope = item._cal_epitope()
 
         # antigen
         ag_residues = []
@@ -270,36 +388,13 @@ class E2EDataset(torch.utils.data.Dataset):
         lc_data = _generate_chain_data(lc_residues, VOCAB.BOL)
 
         data = { key: np.concatenate([ag_data[key], hc_data[key], lc_data[key]], axis=0) \
-                 for key in hc_data}
-        
-        # replace with af2 init / full antigen / monomer antigen
-        if self.use_af2ag:
-            ag = item.get_antigen()
-            pdb_id = ag.pdb_id[:4]
-            if pdb_id in self.af2ag_pdb_id:
-                ag = Protein.from_pdb('all_data/AF2_antigen_aligned_pdbs/' + pdb_id + '.pdb')
-                item.antigen = ag
-                item.epitope = item._cal_epitope()
-            # 1. full ag
-            # af2_ag_residues = []
-            # for chain in ag.get_chain_names():
-            #     chain = ag.get_chain(chain)
-            #     for i in range(len(chain)):
-            #         residue = chain.get_residue(i)
-            #         af2_ag_residues.append(residue)
-            # 2. epitope only
-            af2_ag_residues = []
-            for residue, chain, i in item.get_epitope():
-                af2_ag_residues.append(residue)
-            
-            af2_ag_data = _generate_chain_data(af2_ag_residues, VOCAB.BOA)
+                for key in hc_data}
 
         # smask (sequence) and cmask (coordinates): 0 for fixed, 1 for generate
-        # not generate coordinates of global node 
-        if self.use_af2ag:
-            cmask = [1 for _ in ag_data['S']] + [0] + [1 for _ in hc_data['S'][1:]] + [0] + [1 for _ in lc_data['S'][1:]]
-        else:
-            cmask = [0 for _ in ag_data['S']] + [0] + [1 for _ in hc_data['S'][1:]] + [0] + [1 for _ in lc_data['S'][1:]]
+        # not generate coordinates of global node
+        # **This is the main area of the fix**
+        cmask = [1 if self.use_af2ag else 0 for _ in ag_data['S']] + [0] + [1 for _ in hc_data['S'][1:]] + [0] + [1 for _ in lc_data['S'][1:]]
+        
         # according to the setting of cdr
         if self.cdr is None:
             smask = [0 for _ in ag_data['S']] + [0] + [1 for _ in hc_data['S'][1:]] + [0] + [1 for _ in lc_data['S'][1:]]
@@ -324,7 +419,8 @@ class E2EDataset(torch.utils.data.Dataset):
         data['paratope_mask'] = paratope_mask
 
         template = ConserveTemplateGenerator().construct_template(item, align=False)
-        data['template'] = np.concatenate([af2_ag_data['X'], template]) if self.use_af2ag else template
+        # ** And the fix is reflected here **
+        data['template'] = np.concatenate([ag_data['X'], template])
 
         return data
 

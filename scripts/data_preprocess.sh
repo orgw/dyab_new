@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 ########## Start of Your Settings ##########
 PDB_DIR=$1  # Directory to the IMGT renumbered structures downloaded from SAbDab
 OUT_DIR=$2  # Output Directory (~5G)

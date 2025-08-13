@@ -524,13 +524,61 @@ class Protein:
         self.peptides = peptides
 
     @classmethod
-    def from_pdb(cls, pdb_path):
+    # def from_pdb(cls, pdb_path):
+    #     parser = PDBParser(QUIET=True)
+    #     structure = parser.get_structure('anonym', pdb_path)
+    #     pdb_id = structure.header['idcode'].upper().strip()
+    #     if pdb_id == '':
+    #         # deduce from file name
+    #         pdb_id = os.path.split(pdb_path)[1].split('.')[0] + '(filename)'
+
+    #     peptides = {}
+    #     for chain in structure.get_chains():
+    #         _id = chain.get_id()
+    #         residues = []
+    #         has_non_residue = False
+    #         for residue in chain:
+    #             abrv = residue.get_resname()
+    #             hetero_flag, res_number, insert_code = residue.get_id()
+    #             if hetero_flag != ' ':
+    #                 continue   # residue from glucose or water
+    #             symbol = VOCAB.abrv_to_symbol(abrv)
+    #             if symbol is None:
+    #                 has_non_residue = True
+    #                 # print(f'has non residue: {abrv}')
+    #                 break
+    #             # filter Hs because not all data include them
+    #             atoms = { atom.get_id(): atom.get_coord() for atom in residue if atom.element != 'H' }
+    #             residues.append(Residue(
+    #                 symbol, atoms, (res_number, insert_code)
+    #             ))
+    #         if has_non_residue or len(residues) == 0:  # not a peptide
+    #             continue
+    #         peptides[_id] = Peptide(_id, residues)
+    #     return cls(pdb_id, peptides)
+    def from_pdb(cls, pdb_path_or_handle): # <--- MODIFIED
+        """
+        Creates a Protein object from a PDB file.
+
+        Args:
+            pdb_path_or_handle: Can be a string (file path) or a file-like
+                                object (e.g., from io.StringIO).
+        """
         parser = PDBParser(QUIET=True)
-        structure = parser.get_structure('anonym', pdb_path)
-        pdb_id = structure.header['idcode'].upper().strip()
-        if pdb_id == '':
-            # deduce from file name
-            pdb_id = os.path.split(pdb_path)[1].split('.')[0] + '(filename)'
+        
+        # --- THIS IS THE FIX ---
+        # Check if the input is a file path or an already opened file handle
+        is_path = isinstance(pdb_path_or_handle, (str, os.PathLike))
+        
+        if is_path:
+            structure = parser.get_structure(pdb_path_or_handle, pdb_path_or_handle)
+            pdb_id = structure.header.get('idcode', '').upper().strip()
+            if not pdb_id:
+                pdb_id = os.path.splitext(os.path.basename(pdb_path_or_handle))[0] + '(filename)'
+        else: # Assumes it's a file handle
+            structure = parser.get_structure('in_memory_structure', pdb_path_or_handle)
+            pdb_id = structure.header.get('idcode', 'in_memory').upper().strip()
+        # --- END OF FIX ---
 
         peptides = {}
         for chain in structure.get_chains():
@@ -541,21 +589,21 @@ class Protein:
                 abrv = residue.get_resname()
                 hetero_flag, res_number, insert_code = residue.get_id()
                 if hetero_flag != ' ':
-                    continue   # residue from glucose or water
+                    continue
                 symbol = VOCAB.abrv_to_symbol(abrv)
                 if symbol is None:
                     has_non_residue = True
-                    # print(f'has non residue: {abrv}')
                     break
-                # filter Hs because not all data include them
                 atoms = { atom.get_id(): atom.get_coord() for atom in residue if atom.element != 'H' }
                 residues.append(Residue(
                     symbol, atoms, (res_number, insert_code)
                 ))
-            if has_non_residue or len(residues) == 0:  # not a peptide
+            if has_non_residue or len(residues) == 0:
                 continue
             peptides[_id] = Peptide(_id, residues)
         return cls(pdb_id, peptides)
+
+
 
     def get_id(self):
         return self.pdb_id

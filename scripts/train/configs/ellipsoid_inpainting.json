@@ -1,0 +1,16 @@
+{
+  "train_set": "./all_data/RAbD/train.json",
+  "valid_set": "./all_data/RAbD/valid.json",
+  "save_dir": "./results/ellipsoid_inpainting",
+  "model_type": "EllipsoidInpainter",
+  "max_epochs": 100,
+  "save_topk": 5,
+  "batch_size": 16,
+  "shuffle": true,
+  "lr": 1e-4,
+  "final_lr": 1e-5,
+  "token_dim": 17,
+  "hidden_dim": 128,
+  "num_heads": 4,
+  "num_layers": 3
+}

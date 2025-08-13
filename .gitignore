@@ -20,6 +20,8 @@ TMscore
 
 *.ckpt
 
+*.pse
+
 .vscode
 all_data/
 prev_results/

@@ -288,8 +288,11 @@ class dyAbModel(nn.Module):
 
         # mask sequence and initialize coordinates with template
         true_X, true_S = X.clone(), S.clone()
-        X, S = self.init_mask(X, S, cmask, smask, template)
-
+        try:
+            X, S = self.init_mask(X, S, cmask, smask, template)
+        except:
+            print(f'Error in init_mask: {X.shape}, {S.shape}, {cmask.shape}, {smask.shape}, {template.shape}')
+            import pdb; pdb.set_trace()
         # normalize
         X = self.normalizer.centering(X, S, batch_id, self.aa_feature)
         X = self.normalizer.normalize(X)
