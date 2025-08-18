@@ -149,7 +149,7 @@ if __name__ == '__main__':
     # --- 1. Set parameters for your evaluation ---
     pdb_file = "/nfsdata/home/kiwoong.yoo/workspace/BoltzDesign1/outputs/protein_5hi4_5hi4_H3_inpainting_TEST/pdb/5hi4_results_itr1_length119_model_0.pdb"
     ref_pdb_file = "./all_structures/imgt/5hi4.pdb"
-    json_info_file = "/nfsdata/home/kiwoong.yoo/workspace/dyAb/all_data/RAbD/test.json"
+    json_info_file = "/nfsdata/home/kiwoong.yoo/workspace/dyAb_test/all_data/RAbD/test.json"
     
     pdb_id = os.path.basename(ref_pdb_file).split('.')[0]
     

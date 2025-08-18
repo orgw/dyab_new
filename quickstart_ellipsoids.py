@@ -1,9 +1,9 @@
 import sys, os
-# force Python to resolve "conditioning" and "models" from ./dyab/*
+# force Python to resolve "conditioning" and "models" from ./dyAb_test/*
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "dyab"))
 import argparse, torch
-from conditioning import extract_antibody_ellipsoids          # <- from dyab/conditioning/*
-from models import EllipsoidTokens, InvariantCrossAttention   # <- from dyab/models/*
+from conditioning import extract_antibody_ellipsoids          # <- from dyAb_test/conditioning/*
+from models import EllipsoidTokens, InvariantCrossAttention   # <- from dyAb_test/models/*
 
 p = argparse.ArgumentParser()
 p.add_argument("--pdb", required=True)
