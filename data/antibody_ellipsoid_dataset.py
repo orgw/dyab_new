@@ -3,7 +3,7 @@ from typing import Dict, Any, List
 
 from torch.utils.data import Dataset
 
-from ..conditioning.antibody_ellipsoids import extract_antibody_ellipsoids
+from conditioning.antibody_ellipsoids import extract_antibody_ellipsoids
 
 
 class AntibodyEllipsoidDataset(Dataset):

@@ -1,7 +1,6 @@
 import sys, os
 # force Python to resolve "conditioning" and "models" from ./dyab/*
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "dyab"))
-
 import argparse, torch
 from conditioning import extract_antibody_ellipsoids          # <- from dyab/conditioning/*
 from models import EllipsoidTokens, InvariantCrossAttention   # <- from dyab/models/*
@@ -24,7 +23,7 @@ etok = EllipsoidTokens(d_token=128, vocab=vocab)
 ellip_tokens = etok(n[None], {k: v[None] for k,v in feat.items()})  # (1,K,128)
 
 # 3) Dummy residue features/frames (as dyAb would provide)
-B, N, C = 1, 128, 256
+B, N, C = 1, 128, 96
 s = torch.randn(B, N, C)
 R = torch.eye(3)[None,None].repeat(B, N, 1, 1)          # (B,N,3,3)
 t = torch.zeros(B, N, 3)                                # (B,N,3)

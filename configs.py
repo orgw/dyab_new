@@ -16,7 +16,7 @@ RENUMBER = os.path.join(PROJ_DIR, 'utils', 'renumber.py')
 FOLDX_BIN = './Foldx/foldx_20251231'
 # DockQ 
 # IMPORTANT: change it to your path to DockQ project)
-DOCKQ_DIR = './dyMEAN/DockQ'
+DOCKQ_DIR = '~/workspace/DockQ/src/DockQ'
 # cache directory
 CACHE_DIR = os.path.join(PROJ_DIR, '__cache__')
 if not os.path.exists(CACHE_DIR):

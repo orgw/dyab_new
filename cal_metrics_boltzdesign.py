@@ -8,12 +8,12 @@ from data.pdb_utils import AgAbComplex, Protein
 from evaluation.rmsd import compute_rmsd
 from evaluation.tm_score import tm_score
 from evaluation.lddt import lddt_full
-# The dockq utility is no longer needed as a separate function
-# from evaluation.dockq import dockq 
 from utils.logger import print_log
-from configs import DOCKQ_DIR, CACHE_DIR # Make sure these are configured
-from utils.time_sign import get_time_sign
+# Import DockQ functions to use it as a library
+from DockQ.DockQ import load_PDB, run_on_all_native_interfaces
 
+# Define the contact distance threshold
+CONTACT_DIST = 5.0
 
 def evaluate_and_print_metrics(inputs):
     """
@@ -60,49 +60,77 @@ def evaluate_and_print_metrics(inputs):
     # --- Calculate Metrics ---
     results = {}
     
-    # RMSD(CA)
-    ref_heavy_chain = ref_cplx.get_heavy_chain()
-    ref_light_chain = ref_cplx.get_light_chain()
-    gt_coords = {('heavy', r.get_id()): r.get_coord('CA') for r in ref_heavy_chain}
-    gt_coords.update({('light', r.get_id()): r.get_coord('CA') for r in ref_light_chain})
-    pred_coords = {('heavy', r.get_id()): r.get_coord('CA') for r in mod_heavy_chain}
-    pred_coords.update({('light', r.get_id()): r.get_coord('CA') for r in mod_light_chain})
-    common_residues = sorted(list(set(gt_coords.keys()) & set(pred_coords.keys())))
-    if common_residues:
-        gt_x = np.array([gt_coords[res_id] for res_id in common_residues])
-        pred_x = np.array([pred_coords[res_id] for res_id in common_residues])
+    # AAR and CAAR Calculation
+    gt_s, pred_s = '', ''
+    is_contact = []
+    epitope = ref_cplx.get_epitope()
+    
+    cdr_to_eval = [cdr_type] if isinstance(cdr_type, str) else cdr_type
+    for cdr in cdr_to_eval:
+        gt_cdr = ref_cplx.get_cdr(cdr)
+        mod_cdr = mod_cplx.get_cdr(cdr)
+
+        if gt_cdr and mod_cdr:
+            cur_gt_s = gt_cdr.get_seq()
+            cur_pred_s = mod_cdr.get_seq()
+            gt_s += cur_gt_s
+            pred_s += cur_pred_s
+
+            cur_contact = []
+            for ab_residue in gt_cdr:
+                contact = any(ab_residue.dist_to(ag_residue) < CONTACT_DIST for ag_residue, _, _ in epitope)
+                cur_contact.append(int(contact))
+            is_contact.extend(cur_contact)
+
+    if len(gt_s) > 0 and len(gt_s) == len(pred_s):
+        hit = sum(1 for a, b in zip(gt_s, pred_s) if a == b)
+        chit = sum(1 for a, b, c in zip(gt_s, pred_s, is_contact) if a == b and c == 1)
+        
+        results['AAR'] = hit / len(gt_s)
+        results['CAAR'] = chit / (sum(is_contact) + 1e-10)
+
+    # RMSD(CA) - More direct calculation from reference
+    gt_x, pred_x = [], []
+    for xl, cplx in zip([gt_x, pred_x], [ref_cplx, mod_cplx]):
+        for chain in [cplx.get_heavy_chain(), cplx.get_light_chain()]:
+             if chain:
+                for i in range(len(chain)):
+                    try:
+                        xl.append(chain.get_ca_pos(i))
+                    except KeyError: # Skip if CA not found
+                        pass
+    
+    if len(gt_x) == len(pred_x) and len(gt_x) > 0:
+        gt_x, pred_x = np.array(gt_x), np.array(pred_x)
         results['RMSD(CA) aligned'] = compute_rmsd(gt_x, pred_x, aligned=False)
         results['RMSD(CA)'] = compute_rmsd(gt_x, pred_x, aligned=True)
-    
+
+    # CDR-specific RMSD
+    for cdr in cdr_to_eval:
+        gt_cdr, mod_cdr = ref_cplx.get_cdr(cdr), mod_cplx.get_cdr(cdr)
+        if gt_cdr and mod_cdr and len(gt_cdr) == len(mod_cdr):
+            gt_x = np.array([gt_cdr.get_ca_pos(i) for i in range(len(gt_cdr))])
+            pred_x = np.array([mod_cdr.get_ca_pos(i) for i in range(len(mod_cdr))])
+            results[f'RMSD(CA) CDR{cdr}'] = compute_rmsd(gt_x, pred_x, aligned=True)
+            results[f'RMSD(CA) CDR{cdr} aligned'] = compute_rmsd(gt_x, pred_x, aligned=False)
+
     # TMscore & LDDT
     results['TMscore'] = tm_score(mod_cplx.antibody, ref_cplx.antibody)
     results['LDDT'], _ = lddt_full(mod_cplx, ref_cplx)
 
-    # DockQ Calculation (Corrected)
+    # DockQ Calculation
     try:
-        prefix = get_time_sign(suffix=ref_cplx.get_id().replace('(', '').replace(')', ''))
-        mod_dockq_pdb = os.path.join(CACHE_DIR, prefix + '_dockq_mod.pdb')
-        ref_dockq_pdb = os.path.join(CACHE_DIR, prefix + '_dockq_ref.pdb')
+        model = load_PDB(mod_pdb_path)
+        native = load_PDB(ref_pdb_path)
         
-        mod_cplx.to_pdb(mod_dockq_pdb)
-        ref_cplx.to_pdb(ref_dockq_pdb)
+        chain_map = { H: 'A', L: 'B' }
+        for ag_chain in A:
+            chain_map[ag_chain] = 'C'
 
-        # Use -no_needle to prevent dependency issues, call without old flags
-        cmd = f'{os.path.join(DOCKQ_DIR, "DockQ.py")} {mod_dockq_pdb} {ref_dockq_pdb} -no_needle'
-        with os.popen(cmd) as p:
-            text = p.read()
-        
-        res = re.search(r'DockQ\s+([0-1]\.[0-9]+)', text)
-        if res:
-            score = float(res.group(1))
-        else:
-            print_log(f'DockQ calculation failed. Full output:\n{text}', level='ERROR')
-            score = 0.0
-        results['DockQ'] = score
-        os.remove(mod_dockq_pdb)
-        os.remove(ref_dockq_pdb)
+        _, dockq_score = run_on_all_native_interfaces(model, native, chain_map=chain_map)
+        results['DockQ'] = dockq_score
     except Exception as e:
-        print_log(f'Error in dockq calculation: {e}', level='ERROR')
+        print_log(f'Error in DockQ calculation: {e}', level='ERROR')
         results['DockQ'] = 0.0
 
     return results
@@ -111,9 +139,9 @@ def evaluate_and_print_metrics(inputs):
 # --- Main Script Logic ---
 if __name__ == '__main__':
     # --- 1. Set parameters for your evaluation ---
-    pdb_file = "/nfsdata/home/kiwoong.yoo/workspace/BoltzDesign1/outputs/protein_5hi4_5hi4_H3_inpainting_TEST/pdb/5hi4_results_itr1_length119_model_0.pdb"
+    pdb_file = "/nfsdata/home/kiwoong.yoo/workspace/BoltzDesign1/outputs/protein_5hi4_5hi4_H3_inpainting_SLURM/pdb/5hi4_results_itr1_length119_model_0.pdb"
     ref_pdb_file = "./all_structures/imgt/5hi4.pdb"
-    json_info_file = "./pdb_info.json" # Assumes this file exists
+    json_info_file = "/nfsdata/home/kiwoong.yoo/workspace/dyAb/all_data/RAbD/test.json"
     
     pdb_id = os.path.basename(ref_pdb_file).split('.')[0]
     
@@ -123,25 +151,33 @@ if __name__ == '__main__':
 
     try:
         with open(json_info_file, 'r') as f:
-            for line in f:
-                if not line.strip(): continue
-                # This handles both standard JSON and JSON Lines format
-                data_item = json.loads(line.strip().rstrip(','))
-                if isinstance(data_item, list): # Full JSON array
-                    pdb_info = next((item for item in data_item if item.get("pdb") == pdb_id), None)
-                elif data_item.get("pdb") == pdb_id: # JSON Lines
-                    pdb_info = data_item
-                else:
-                    continue
-                
-                if pdb_info:
-                    heavy_chain_id = pdb_info['heavy_chain']
-                    light_chain_id = pdb_info['light_chain']
-                    antigen_chain_ids = pdb_info['antigen_chains']
-                    break
-        if not heavy_chain_id:
+            # This logic handles both a single JSON object/array and JSON Lines format
+            content = f.read()
+            try:
+                # Try loading as a single JSON entity
+                data = json.loads(content)
+                if isinstance(data, list):
+                    pdb_info = next((item for item in data if item.get("pdb") == pdb_id), None)
+                else: # Should not happen with consistent format
+                    pdb_info = None
+            except json.JSONDecodeError:
+                # If that fails, parse as JSON Lines
+                pdb_info = None
+                for line in content.splitlines():
+                    if not line.strip(): continue
+                    data_item = json.loads(line)
+                    if data_item.get("pdb") == pdb_id:
+                        pdb_info = data_item
+                        break
+        
+        if pdb_info:
+            heavy_chain_id = pdb_info['heavy_chain']
+            light_chain_id = pdb_info['light_chain']
+            antigen_chain_ids = pdb_info['antigen_chains']
+        else:
             print(f"\nERROR: PDB ID '{pdb_id}' not found in {json_info_file}")
             exit()
+
     except FileNotFoundError:
         print(f"\nERROR: JSON info file not found at: {json_info_file}")
         exit()
@@ -149,13 +185,7 @@ if __name__ == '__main__':
         print(f"\nERROR: Failed to parse JSON or find required keys. Details: {e}")
         exit()
 
-    cdr_type = None
-    match = re.search(r'_([HL]\d)_inpainting_TEST', pdb_file)
-    if match:
-        cdr_type = match.group(1)
-    else:
-        print(f"\nERROR: Could not determine CDR type from path: {pdb_file}")
-        exit()
+    cdr_type = 'H3'
 
     sidechain_packing = False
 

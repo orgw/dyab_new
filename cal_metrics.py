@@ -1,196 +1,225 @@
-#!/usr/bin/python
-# -*- coding:utf-8 -*-
-import argparse
-import json
 import os
-from time import time
-from tqdm import tqdm
-from tqdm.contrib.concurrent import process_map
-
+import json
+import re
 import numpy as np
 
-from data.pdb_utils import AgAbComplex
+# Assuming these utilities are in the path and configured
+from data.pdb_utils import AgAbComplex, Protein
 from evaluation.rmsd import compute_rmsd
 from evaluation.tm_score import tm_score
 from evaluation.lddt import lddt_full
-from evaluation.dockq import dockq
-from utils.relax import openmm_relax, rosetta_sidechain_packing
 from utils.logger import print_log
+# Import DockQ functions to use it as a library
+from DockQ.DockQ import load_PDB, run_on_all_native_interfaces
 
-from configs import CONTACT_DIST
+# Define the contact distance threshold
+CONTACT_DIST = 5.0
 
+def evaluate_and_print_metrics(inputs):
+    """
+    Calculates metrics for a predicted antibody structure against a reference,
+    and prints key sequence information.
+    """
+    mod_pdb_path, ref_pdb_path, H, L, A, cdr_type, sidechain = inputs
+    
+    # Load structures with their correct, respective chain IDs
+    # Generated PDB always uses A, B, C for H, L, Antigen
+    mod_cplx = AgAbComplex.from_pdb(mod_pdb_path, 'A', 'B', ['C'], skip_epitope_cal=True, skip_validity_check=True)
+    # Reference PDB uses the chain IDs from the JSON file
+    ref_cplx = AgAbComplex.from_pdb(ref_pdb_path, H, L, A, skip_epitope_cal=False, skip_validity_check=False)
 
-def cal_metrics(inputs):
-    if len(inputs) == 6:
-        mod_pdb, ref_pdb, H, L, A, cdr_type = inputs
-        sidechain = False
-    elif len(inputs) == 7:
-        mod_pdb, ref_pdb, H, L, A, cdr_type, sidechain = inputs
-    do_refine = False
+    # Ensure the generated model uses the same CDR definitions as the reference
+    mod_cplx.cdr_pos = ref_cplx.cdr_pos
 
-    # sidechain packing
-    if sidechain:
-        refined_pdb = mod_pdb[:-4] + '_sidechain.pdb'
-        mod_pdb = rosetta_sidechain_packing(mod_pdb, refined_pdb)
+    # --- Print Sequence Information ---
+    print("\n--- Sequence Information ---")
+    
+    # Reference Sequences
+    print("\n[Reference PDB]")
+    print(f"  Heavy Chain ({H}): {ref_cplx.get_heavy_chain().get_seq()}")
+    print(f"  Light Chain ({L}): {ref_cplx.get_light_chain().get_seq()}")
+    for chain_id, antigen_chain in ref_cplx.antigen:
+        print(f"  Antigen Ch. {chain_id} : {antigen_chain.get_seq()}")
+    
+    # Generated Model Sequences
+    print("\n[Generated PDB]")
+    mod_heavy_chain = mod_cplx.get_heavy_chain()
+    mod_light_chain = mod_cplx.get_light_chain()
+    if mod_heavy_chain: print(f"  Heavy Chain (A): {mod_heavy_chain.get_seq()}")
+    if mod_light_chain: print(f"  Light Chain (B): {mod_light_chain.get_seq()}")
+    for chain_id, antigen_chain in mod_cplx.antigen:
+        print(f"  Antigen Ch. {chain_id} : {antigen_chain.get_seq()}")
 
-    # load complex
-    if do_refine:
-        refined_pdb = mod_pdb[:-4] + '_refine.pdb'
-        pdb_id = os.path.split(mod_pdb)[-1]
-        print(f'{pdb_id} started refining')
-        start = time()
-        mod_pdb = openmm_relax(mod_pdb, refined_pdb, excluded_chains=A)  # relax clashes
-        print(f'{pdb_id} finished openmm relax, elapsed {round(time() - start)} s')
-    mod_cplx = AgAbComplex.from_pdb(mod_pdb, H, L, A, skip_epitope_cal=True)
-    ref_cplx = AgAbComplex.from_pdb(ref_pdb, H, L, A, skip_epitope_cal=False)
-
+    # CDR H3 Sequences
+    print("\n[CDR H3 Sequence]")
+    ref_h3 = ref_cplx.get_cdr('H3')
+    mod_h3 = mod_cplx.get_cdr('H3')
+    if ref_h3: print(f"  Reference : {ref_h3.get_seq()}")
+    if mod_h3: print(f"  Generated : {mod_h3.get_seq()}")
+    
+    # --- Calculate Metrics ---
     results = {}
-    cdr_type = [cdr_type] if type(cdr_type) == str else cdr_type
-
-    # 1. AAR & CAAR
-    # CAAR
-    epitope = ref_cplx.get_epitope()
+    
+    # AAR and CAAR Calculation
+    gt_s, pred_s = '', ''
     is_contact = []
-    if cdr_type is None:  # entire antibody
-        gt_s = ref_cplx.get_heavy_chain().get_seq() + ref_cplx.get_light_chain().get_seq()
-        pred_s = mod_cplx.get_heavy_chain().get_seq() + mod_cplx.get_light_chain().get_seq()
-        # contact
-        for chain in [ref_cplx.get_heavy_chain(), ref_cplx.get_light_chain()]:
-            for ab_residue in chain:
-                contact = False
-                for ag_residue, _, _ in epitope:
-                    dist = ab_residue.dist_to(ag_residue)
-                    if dist < CONTACT_DIST:
-                        contact = True
-                is_contact.append(int(contact))
-    else:
-        gt_s, pred_s = '', ''
-        for cdr in cdr_type:
-            gt_cdr = ref_cplx.get_cdr(cdr)
+    epitope = ref_cplx.get_epitope()
+    
+    cdr_to_eval = [cdr_type] if isinstance(cdr_type, str) else cdr_type
+    for cdr in cdr_to_eval:
+        gt_cdr = ref_cplx.get_cdr(cdr)
+        mod_cdr = mod_cplx.get_cdr(cdr)
+
+        if gt_cdr and mod_cdr:
             cur_gt_s = gt_cdr.get_seq()
-            cur_pred_s = mod_cplx.get_cdr(cdr).get_seq()
+            cur_pred_s = mod_cdr.get_seq()
             gt_s += cur_gt_s
             pred_s += cur_pred_s
-            # contact
+
             cur_contact = []
             for ab_residue in gt_cdr:
-                contact = False
-                for ag_residue, _, _ in epitope:
-                    dist = ab_residue.dist_to(ag_residue)
-                    if dist < CONTACT_DIST:
-                        contact = True
+                contact = any(ab_residue.dist_to(ag_residue) < CONTACT_DIST for ag_residue, _, _ in epitope)
                 cur_contact.append(int(contact))
             is_contact.extend(cur_contact)
 
-            hit, chit = 0, 0
-            for a, b, contact in zip(cur_gt_s, cur_pred_s, cur_contact):
-                if a == b:
-                    hit += 1
-                    if contact == 1:
-                        chit += 1
-            results[f'AAR {cdr}'] = hit * 1.0 / len(cur_gt_s)
-            results[f'CAAR {cdr}'] = chit * 1.0 / (sum(cur_contact) + 1e-10)
+            # Per-CDR metrics
+            if len(cur_gt_s) > 0 and len(cur_gt_s) == len(cur_pred_s):
+                hit_cdr = sum(1 for a, b in zip(cur_gt_s, cur_pred_s) if a == b)
+                chit_cdr = sum(1 for a, b, c in zip(cur_gt_s, cur_pred_s, cur_contact) if a == b and c == 1)
+                results[f'AAR {cdr}'] = hit_cdr / len(cur_gt_s)
+                results[f'CAAR {cdr}'] = chit_cdr / (sum(cur_contact) + 1e-10)
 
-    if len(gt_s) != len(pred_s):
-        print_log(f'Length conflict: {len(gt_s)} and {len(pred_s)}', level='WARN')
-    hit, chit = 0, 0
-    for a, b, contact in zip(gt_s, pred_s, is_contact):
-        if a == b:
-            hit += 1
-            if contact == 1:
-                chit += 1
-    results['AAR'] = hit * 1.0 / len(gt_s)
-    results['CAAR'] = chit * 1.0 / (sum(is_contact) + 1e-10)
+    # Overall AAR/CAAR
+    if len(gt_s) > 0 and len(gt_s) == len(pred_s):
+        hit = sum(1 for a, b in zip(gt_s, pred_s) if a == b)
+        chit = sum(1 for a, b, c in zip(gt_s, pred_s, is_contact) if a == b and c == 1)
+        
+        results['AAR'] = hit / len(gt_s)
+        results['CAAR'] = chit / (sum(is_contact) + 1e-10)
 
-    # 2. RMSD(CA) w/o align
+    # RMSD(CA) - Cleaned up to only show aligned, meaningful values
     gt_x, pred_x = [], []
-    for xl, c in zip([gt_x, pred_x], [ref_cplx, mod_cplx]):
-        for chain in [c.get_heavy_chain(), c.get_light_chain()]:
-            for i in range(len(chain)):
-                xl.append(chain.get_ca_pos(i))
-    assert len(gt_x) == len(pred_x), f'coordinates length conflict'
-    gt_x, pred_x = np.array(gt_x), np.array(pred_x)
-    results['RMSD(CA) aligned'] = compute_rmsd(gt_x, pred_x, aligned=False)
-    results['RMSD(CA)'] = compute_rmsd(gt_x, pred_x, aligned=True)
-    if cdr_type is not None:
-        for cdr in cdr_type:
-            gt_cdr, pred_cdr = ref_cplx.get_cdr(cdr), mod_cplx.get_cdr(cdr)
-            gt_x = np.array([gt_cdr.get_ca_pos(i) for i in range(len(gt_cdr))])
-            pred_x = np.array([pred_cdr.get_ca_pos(i) for i in range(len(pred_cdr))])
-            results[f'RMSD(CA) CDR{cdr}'] = compute_rmsd(gt_x, pred_x, aligned=True)
-            results[f'RMSD(CA) CDR{cdr} aligned'] = compute_rmsd(gt_x, pred_x, aligned=False)
-    if cdr_type is None:
-        cdr_type = ['H3']
-        for cdr in cdr_type:
-            gt_cdr, pred_cdr = ref_cplx.get_cdr(cdr), mod_cplx.get_cdr(cdr)
-            gt_x = np.array([gt_cdr.get_ca_pos(i) for i in range(len(gt_cdr))])
-            pred_x = np.array([pred_cdr.get_ca_pos(i) for i in range(len(pred_cdr))])
-            results[f'RMSD(CA) CDR{cdr}'] = compute_rmsd(gt_x, pred_x, aligned=True)
-            results[f'RMSD(CA) CDR{cdr} aligned'] = compute_rmsd(gt_x, pred_x, aligned=False)
+    for xl, cplx in zip([gt_x, pred_x], [ref_cplx, mod_cplx]):
+        for chain in [cplx.get_heavy_chain(), cplx.get_light_chain()]:
+             if chain:
+                for i in range(len(chain)):
+                    try:
+                        xl.append(chain.get_ca_pos(i))
+                    except KeyError: # Skip if CA not found
+                        pass
+    
+    if len(gt_x) == len(pred_x) and len(gt_x) > 0:
+        gt_x_all, pred_x_all = np.array(gt_x), np.array(pred_x)
+        # This calculates RMSD for the full antibody after alignment
+        results['RMSD(CA)'] = compute_rmsd(gt_x_all, pred_x_all, aligned=True)
 
-    # 3. TMscore
+    # CDR-specific RMSD - Cleaned up to only show aligned, meaningful values
+    for cdr in cdr_to_eval:
+        gt_cdr, mod_cdr = ref_cplx.get_cdr(cdr), mod_cplx.get_cdr(cdr)
+        if gt_cdr and mod_cdr and len(gt_cdr) == len(mod_cdr):
+            gt_x_cdr = np.array([gt_cdr.get_ca_pos(i) for i in range(len(gt_cdr))])
+            pred_x_cdr = np.array([mod_cdr.get_ca_pos(i) for i in range(len(mod_cdr))])
+            # This calculates RMSD for the CDR loop after alignment
+            results[f'RMSD(CA) CDR{cdr}'] = compute_rmsd(gt_x_cdr, pred_x_cdr, aligned=True)
+
+    # TMscore & LDDT
     results['TMscore'] = tm_score(mod_cplx.antibody, ref_cplx.antibody)
+    results['LDDT'], _ = lddt_full(mod_cplx, ref_cplx)
 
-
-    # 4. LDDT
-
-    score, _ = lddt_full(mod_cplx, ref_cplx)
-    results['LDDT'] = score
-
-    # 5. DockQ
+    # DockQ Calculation
     try:
-        score = dockq(mod_cplx, ref_cplx, cdrh3_only=True) # consistent with HERN
-    except Exception as e:
-        print_log(f'Error in dockq: {e}, set to 0', level='ERROR')
-        score = 0
-    results['DockQ'] = score
+        model = load_PDB(mod_pdb_path)
+        native = load_PDB(ref_pdb_path)
+        
+        chain_map = { H: 'A', L: 'B' }
+        for ag_chain in A:
+            chain_map[ag_chain] = 'C'
 
-    print(f'{mod_cplx.get_id()}: {results}')
+        _, dockq_score = run_on_all_native_interfaces(model, native, chain_map=chain_map)
+        results['DockQ'] = dockq_score
+    except Exception as e:
+        print_log(f'Error in DockQ calculation: {e}', level='ERROR')
+        results['DockQ'] = 0.0
 
     return results
 
 
-def main(args):
-    with open(args.test_set, 'r') as fin:
-        lines = fin.read().strip().split('\n')
-    items = [json.loads(line) for line in lines]
-    metric_inputs, pdbs = [], [item['pdb'] for item in items]
-    pmets = []
-    for item in items:
-        keys = ['mod_pdb', 'ref_pdb', 'H', 'L', 'A', 'cdr_type']
-        inputs = [item[key] for key in keys]
-        
-        pdb_name = item['pdb']
-        inputs[1] = f'./all_structures/imgt/{pdb_name}.pdb'
-
-        if 'sidechain' in item:
-            inputs.append(item['sidechain'])
-        metric_inputs.append(inputs)
-        pmets.append(item['pmetric'])
-
-    if args.num_workers > 1:
-        metrics = process_map(cal_metrics, metric_inputs, max_workers=args.num_workers)
-    else:
-        metrics = [cal_metrics(inputs) for inputs in tqdm(metric_inputs)]
-    for name in metrics[0]:
-        vals = [item[name] for item in metrics]
-        print(f'{name}: {sum(vals) / len(vals)}')
-        lowest_i = min([i for i in range(len(vals))], key=lambda i: vals[i])
-        highest_i = max([i for i in range(len(vals))], key=lambda i: vals[i])
-        print(f'\tlowest: {vals[lowest_i]}, pdb: {pdbs[lowest_i]}')
-        print(f'\thighest: {vals[highest_i]}, pdb: {pdbs[highest_i]}')
-        # calculate correlation
-        corr = np.corrcoef(pmets, vals)[0][1]
-        print(f'\tpearson correlation with development metric: {corr}')
-
-
-def parse():
-    parser = argparse.ArgumentParser(description='calculate metrics')
-    parser.add_argument('--test_set', type=str, default='./all_data/camera_ready/single_cdr_0415_new/summary.json', help='Path to test set')
-    parser.add_argument('--num_workers', type=int, default=6, help='Number of workers to use')
-
-    return parser.parse_args()
-
-
+# --- Main Script Logic ---
 if __name__ == '__main__':
-    main(parse())
+    # --- 1. Set parameters for your evaluation ---
+    pdb_file = "/nfsdata/home/kiwoong.yoo/workspace/BoltzDesign1/outputs/protein_5hi4_5hi4_H3_inpainting_TEST/pdb/5hi4_results_itr1_length119_model_0.pdb"
+    ref_pdb_file = "./all_structures/imgt/5hi4.pdb"
+    json_info_file = "/nfsdata/home/kiwoong.yoo/workspace/dyAb/all_data/RAbD/test.json"
+    
+    pdb_id = os.path.basename(ref_pdb_file).split('.')[0]
+    
+    heavy_chain_id = None
+    light_chain_id = None
+    antigen_chain_ids = None
+
+    try:
+        with open(json_info_file, 'r') as f:
+            # This logic handles both a single JSON object/array and JSON Lines format
+            content = f.read()
+            try:
+                # Try loading as a single JSON entity
+                data = json.loads(content)
+                if isinstance(data, list):
+                    pdb_info = next((item for item in data if item.get("pdb") == pdb_id), None)
+                else: # Should not happen with consistent format
+                    pdb_info = None
+            except json.JSONDecodeError:
+                # If that fails, parse as JSON Lines
+                pdb_info = None
+                for line in content.splitlines():
+                    if not line.strip(): continue
+                    data_item = json.loads(line)
+                    if data_item.get("pdb") == pdb_id:
+                        pdb_info = data_item
+                        break
+        
+        if pdb_info:
+            heavy_chain_id = pdb_info['heavy_chain']
+            light_chain_id = pdb_info['light_chain']
+            antigen_chain_ids = pdb_info['antigen_chains']
+        else:
+            print(f"\nERROR: PDB ID '{pdb_id}' not found in {json_info_file}")
+            exit()
+
+    except FileNotFoundError:
+        print(f"\nERROR: JSON info file not found at: {json_info_file}")
+        exit()
+    except (json.JSONDecodeError, KeyError) as e:
+        print(f"\nERROR: Failed to parse JSON or find required keys. Details: {e}")
+        exit()
+
+    cdr_type = None
+    match = re.search(r'_([HL]\d)_inpainting_TEST', pdb_file)
+    if match:
+        cdr_type = match.group(1)
+    else:
+        print(f"\nERROR: Could not determine CDR type from path: {pdb_file}")
+        exit()
+
+    sidechain_packing = False
+
+    # --- 2. Run Evaluation ---
+    if not all([pdb_file, ref_pdb_file, heavy_chain_id, light_chain_id, antigen_chain_ids, cdr_type]):
+        print("\nERROR: One or more evaluation parameters are missing. Aborting.")
+    elif not os.path.exists(pdb_file):
+        print(f"\nERROR: Model PDB file not found at: {pdb_file}")
+    elif not os.path.exists(ref_pdb_file):
+        print(f"\nERROR: Reference PDB file not found at: {ref_pdb_file}")
+    else:
+        metric_inputs = (
+            pdb_file, ref_pdb_file, heavy_chain_id, light_chain_id, antigen_chain_ids, cdr_type, sidechain_packing,
+        )
+        
+        results = evaluate_and_print_metrics(metric_inputs)
+
+        print("\n--- Final Evaluation Results ---")
+        if results:
+            for metric_name, value in results.items():
+                print(f"{metric_name}: {value:.4f}")
+        else:
+            print("Evaluation did not complete successfully.")
