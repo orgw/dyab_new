@@ -35,7 +35,7 @@ def get_dist_info():
 def parse():
     parser = argparse.ArgumentParser(description='training')
     # task
-    parser.add_argument('--task', type=str, default='single_cdr_design', choices=['ellipsoid','single_cdr_design', 'multi_cdr_design', 'single_cdr_opt', 'multi_cdr_opt', 'struct_prediction', 'full_design'])
+    parser.add_argument('--task', type=str, default='single_cdr_design_ellipsoid', choices=['single_cdr_design','single_cdr_design', 'multi_cdr_design', 'single_cdr_opt', 'multi_cdr_opt', 'struct_prediction', 'full_design'])
     parser.add_argument('--ex_name', type=str, default='DEBUG')
     parser.add_argument('--strategy', type=str, default='ddp')
     parser.add_argument('--accelerator', type=str, default='gpu')

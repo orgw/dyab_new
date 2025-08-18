@@ -11,7 +11,9 @@ import numpy as np
 from evaluation.rmsd import compute_rmsd
 from evaluation.tm_score import tm_score
 from evaluation.lddt import lddt,lddt_full
-from evaluation.dockq import dockq
+# from evaluation.dockq import dockq
+from configs import DOCKQ_DIR, CACHE_DIR # Make sure these are configured
+
 from utils.relax import openmm_relax, rosetta_sidechain_packing
 from utils.logger import print_log
 

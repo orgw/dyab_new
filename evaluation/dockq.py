@@ -108,6 +108,59 @@ def evaluate_and_print_metrics(inputs):
     return results
 
 
+
+def dockq(mod_cplx: AgAbComplex, ref_cplx: AgAbComplex, cdrh3_only=False):
+    """
+    Calculates the DockQ score between a model and reference complex.
+
+    Args:
+        mod_cplx (AgAbComplex): The modeled/predicted Ag-Ab complex.
+        ref_cplx (AgAbComplex): The reference/native Ag-Ab complex.
+        cdrh3_only (bool, optional): If True, calculates DockQ for the CDRH3 
+                                     and antigen interface only. Defaults to False.
+
+    Returns:
+        float: The calculated DockQ score.
+    """
+    H, L = ref_cplx.heavy_chain, ref_cplx.light_chain
+    prefix = get_time_sign(suffix=ref_cplx.get_id().replace('(', '').replace(')', ''))
+    mod_pdb = os.path.join(CACHE_DIR, prefix + '_dockq_mod.pdb')
+    ref_pdb = os.path.join(CACHE_DIR, prefix + '_dockq_ref.pdb')
+    
+    # The heavy and light chain IDs must be consistent for the DockQ script flags.
+    # The model complex uses 'A' for heavy and 'B' for light.
+    model_heavy_chain_id = 'A'
+    model_light_chain_id = 'B'
+
+    # The reference complex uses its native chain IDs.
+    ref_heavy_chain_id = ref_cplx.get_heavy_chain().get_id()
+    ref_light_chain_id = ref_cplx.get_light_chain().get_id()
+
+    mod_cplx.to_pdb(mod_pdb)
+    ref_cplx.to_pdb(ref_pdb)
+
+    cmd = (f'{os.path.join(DOCKQ_DIR, "DockQ.py")} {mod_pdb} {ref_pdb} '
+           f'-model_chain1 {model_heavy_chain_id} {model_light_chain_id} '
+           f'-native_chain1 {ref_heavy_chain_id} {ref_light_chain_id} -no_needle')
+    
+    with os.popen(cmd) as p:
+        text = p.read()
+    
+    res = re.search(r'DockQ\s+([0-1]\.[0-9]+)', text)
+    
+    score = 0.0
+    if res:
+        score = float(res.group(1))
+    else:
+        # Handle cases where DockQ fails
+        print(f"Warning: DockQ calculation failed for {ref_cplx.get_id()}. Output:\n{text}")
+
+    os.remove(mod_pdb)
+    os.remove(ref_pdb)
+    
+    return score
+
+
 # --- Main Script Logic ---
 if __name__ == '__main__':
     # --- 1. Set parameters for your evaluation ---

@@ -3,7 +3,7 @@ from typing import Dict, Any, List
 
 from torch.utils.data import Dataset
 
-from conditioning.antibody_ellipsoids import extract_antibody_ellipsoids
+from conditioning.antibody_ellipsoids import *
 
 
 class AntibodyEllipsoidDataset(Dataset):
@@ -20,7 +20,7 @@ class AntibodyEllipsoidDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         item = dict(self.items[idx])
-        ell = extract_antibody_ellipsoids(
+        ell = extract_antibody_ellipsoids_from_json_data(
             item["pdb_path"],
             heavy_ids=item.get("heavy_ids"),
             light_ids=item.get("light_ids"),
